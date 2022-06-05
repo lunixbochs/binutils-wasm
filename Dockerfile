@@ -27,7 +27,7 @@ RUN cd binutils-gdb && \
     git apply < /root/binutils.diff && \
     sed -i -re 's/(BUILD_DLLTOOL|DLLWRAP|WINDRES)=.*$/\1=/' binutils/configure && \
     mkdir -p build && cd build && \
-    export CFLAGS="$CFLAGS -D_WASI_EMULATED_SIGNAL" \
+    export CFLAGS="$CFLAGS -Os -D_WASI_EMULATED_SIGNAL" \
         LDFLAGS="$LDFLAGS -lwasi-emulated-signal -lwasi-emulated-getpid" \
         AR=/wasi-sdk-16.0/bin/ar && \
     ../configure --host=wasm32-unknown-wasi --enable-64-bit-bfd --disable-debug --disable-dependency-tracking --disable-werror --enable-multilib --enable-targets=all --disable-nls --disable-gdb --disable-libdecnumber --disable-readline --disable-sim --enable-shared --prefix="/opt/binutils-wasi" && \

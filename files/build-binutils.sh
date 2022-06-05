@@ -1,6 +1,6 @@
 #!/bin/bash -u
 
-CFLAGS="-W -Wall -Wstrict-prototypes -Wshadow -I../../zlib --sysroot=/wasi-sdk-16.0/share/wasi-sysroot -D_WASI_EMULATED_SIGNAL"
+CFLAGS="-Os -W -Wall -Wstrict-prototypes -Wshadow -I../../zlib --sysroot=/wasi-sdk-16.0/share/wasi-sysroot -D_WASI_EMULATED_SIGNAL"
 LDFLAGS="-lwasi-emulated-signal -lwasi-emulated-getpid -L./../zlib"
 
 libtool() {
