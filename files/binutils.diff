@@ -1,0 +1,202 @@
+diff --git a/bfd/opncls.c b/bfd/opncls.c
+index f0ca9048f68..8d29e8a96a0 100644
+--- a/bfd/opncls.c
++++ b/bfd/opncls.c
+@@ -770,12 +770,7 @@ _maybe_make_executable (bfd * abfd)
+ 	     which run tests with "ld [...] -o /dev/null".  */
+ 	  && S_ISREG(buf.st_mode))
+ 	{
+-	  unsigned int mask = umask (0);
+ 
+-	  umask (mask);
+-	  chmod (bfd_get_filename (abfd),
+-		 (0777
+-		  & (buf.st_mode | ((S_IXUSR | S_IXGRP | S_IXOTH) &~ mask))));
+ 	}
+     }
+ }
+diff --git a/binutils/Makefile.am b/binutils/Makefile.am
+index 751fbacce12..2bc5f82fb75 100644
+--- a/binutils/Makefile.am
++++ b/binutils/Makefile.am
+@@ -107,7 +107,7 @@ TEST_PROGS = $(BFDTEST1_PROG) $(BFDTEST2_PROG) $(GENTESTDLLS_PROG)
+ RENAMED_PROGS = $(NM_PROG) $(STRIP_PROG) $(DEMANGLER_PROG)
+ noinst_PROGRAMS = $(RENAMED_PROGS) $(TEST_PROGS) @BUILD_MISC@
+ 
+-EXTRA_PROGRAMS = srconv sysdump coffdump $(DLLTOOL_PROG) $(WINDRES_PROG) $(WINDMC_PROG) $(DLLWRAP_PROG)
++EXTRA_PROGRAMS = srconv sysdump coffdump $(WINDMC_PROG)
+ 
+ # Stuff that goes in tooldir/ if appropriate.
+ TOOL_PROGS = nm-new strip-new ar ranlib dlltool objdump objcopy readelf
+diff --git a/binutils/ar.c b/binutils/ar.c
+index 6f3f1d6946f..ce47a60e168 100644
+--- a/binutils/ar.c
++++ b/binutils/ar.c
+@@ -1238,8 +1238,6 @@ extract_file (bfd *abfd)
+ 
+   output_file = NULL;
+ 
+-  chmod (output_filename, buf.st_mode);
+-
+   if (preserve_dates)
+     {
+       /* Set access time to modification time.  Only st_mtime is
+@@ -1302,9 +1300,9 @@ write_archive (bfd *iarch)
+   if (!bfd_set_archive_head (obfd, contents_head))
+     bfd_fatal (old_name);
+ 
+-  tmpfd = dup (tmpfd);
+   if (!bfd_close (obfd))
+     bfd_fatal (old_name);
++  tmpfd = open(new_name, O_RDONLY);
+ 
+   output_bfd = NULL;
+   output_filename = NULL;
+diff --git a/binutils/arsup.c b/binutils/arsup.c
+index 260ee69739f..b00accbd056 100644
+--- a/binutils/arsup.c
++++ b/binutils/arsup.c
+@@ -352,7 +352,7 @@ ar_save (void)
+       if (deterministic > 0)
+         obfd->flags |= BFD_DETERMINISTIC_OUTPUT;
+ 
+-      temp_fd = dup (temp_fd);
++      temp_fd = open(temp_name, O_RDONLY);
+       bfd_close (obfd);
+ 
+       if (stat (real_name, &target_stat) != 0)
+diff --git a/binutils/bucomm.c b/binutils/bucomm.c
+index 5cf9de75ff7..e1c2763ea5e 100644
+--- a/binutils/bucomm.c
++++ b/binutils/bucomm.c
+@@ -521,6 +521,49 @@ template_in_dir (const char *path)
+ #undef template
+ }
+ 
++// __randname (MIT) from https://github.com/WebAssembly/wasi-libc/blob/659ff414560721b1660a19685110e484a081c3d4/libc-top-half/musl/src/temp/__randname.c
++/* This assumes that a check for the
++   template size has already been made */
++static char *__randname(char *template)
++{
++  int i;
++  struct timespec ts;
++  unsigned long r;
++
++  clock_gettime(CLOCK_REALTIME, &ts);
++  r = ts.tv_nsec*65537 ^ (uintptr_t)&ts / 16 + (uintptr_t)template;
++  for (i=0; i<6; i++, r>>=5)
++    template[i] = 'A'+(r&15)+(r&16)*2;
++
++  return template;
++}
++
++// mktemp (MIT) from https://github.com/WebAssembly/wasi-libc/blob/659ff414560721b1660a19685110e484a081c3d4/libc-top-half/musl/src/temp/mktemp.c
++static char *__mktemp(char *template)
++{
++  size_t l = strlen(template);
++  int retries = 100;
++  struct stat st;
++
++  if (l < 6 || memcmp(template+l-6, "XXXXXX", 6)) {
++    errno = EINVAL;
++    *template = 0;
++    return template;
++  }
++
++  do {
++    __randname(template+l-6);
++    if (stat(template, &st)) {
++      if (errno != ENOENT) *template = 0;
++      return template;
++    }
++  } while (--retries);
++
++  *template = 0;
++  errno = EEXIST;
++  return template;
++}
++
+ /* Return the name of a created temporary file in the same directory
+    as FILENAME.  */
+ 
+@@ -533,7 +576,7 @@ make_tempname (const char *filename, int *ofd)
+ #ifdef HAVE_MKSTEMP
+   fd = mkstemp (tmpname);
+ #else
+-  tmpname = mktemp (tmpname);
++  tmpname = __mktemp (tmpname);
+   if (tmpname == NULL)
+     return NULL;
+   fd = open (tmpname, O_RDWR | O_CREAT | O_EXCL, 0600);
+@@ -558,7 +601,7 @@ make_tempdir (const char *filename)
+ #ifdef HAVE_MKDTEMP
+   return mkdtemp (tmpname);
+ #else
+-  tmpname = mktemp (tmpname);
++  tmpname = __mktemp (tmpname);
+   if (tmpname == NULL)
+     return NULL;
+ #if defined (_WIN32) && !defined (__CYGWIN32__)
+diff --git a/binutils/objcopy.c b/binutils/objcopy.c
+index 7ad39e854f0..24e6544cd75 100644
+--- a/binutils/objcopy.c
++++ b/binutils/objcopy.c
+@@ -1961,7 +1961,6 @@ copy_unknown_object (bfd *ibfd, bfd *obfd)
+ 
+   /* We should at least to be able to read it back when copying an
+      unknown object in an archive.  */
+-  chmod (bfd_get_filename (obfd), buf.st_mode | S_IRUSR);
+   free (cbuf);
+   return true;
+ }
+@@ -4859,7 +4858,7 @@ strip_main (int argc, char *argv[])
+ 	{
+ 	  tmpname = make_tempname (argv[i], &tmpfd);
+ 	  if (tmpfd >= 0)
+-	    copyfd = dup (tmpfd);
++	    copyfd = open(tmpname, O_RDONLY);
+ 	}
+       else
+ 	tmpname = output_file;
+@@ -5947,7 +5946,7 @@ copy_main (int argc, char *argv[])
+     {
+       tmpname = make_tempname (input_filename, &tmpfd);
+       if (tmpfd >= 0)
+-	copyfd = dup (tmpfd);
++	copyfd = open(tmpname, O_RDONLY);
+     }
+   else
+     tmpname = output_filename;
+diff --git a/binutils/rename.c b/binutils/rename.c
+index 88e011526c9..4616493f348 100644
+--- a/binutils/rename.c
++++ b/binutils/rename.c
+@@ -69,13 +69,6 @@ simple_copy (int fromfd, const char *to,
+ 
+   saved = errno;
+ 
+-#if !defined (_WIN32) || defined (__CYGWIN32__)
+-  /* Writing to a setuid/setgid file may clear S_ISUID and S_ISGID.
+-     Try to restore them, ignoring failure.  */
+-  if (target_stat != NULL)
+-    fchmod (tofd, target_stat->st_mode);
+-#endif
+-
+   close (fromfd);
+   close (tofd);
+   if (nread < 0)
+diff --git a/libiberty/clock.c b/libiberty/clock.c
+index e8104a79cb0..b61e9a16c9f 100644
+--- a/libiberty/clock.c
++++ b/libiberty/clock.c
+@@ -65,8 +65,9 @@ number of seconds used.
+ #endif
+ 
+ /* FIXME: should be able to declare as clock_t. */
++#include <time.h>
+ 
+-long
++clock_t
+ clock (void)
+ {
+ #ifdef HAVE_GETRUSAGE
